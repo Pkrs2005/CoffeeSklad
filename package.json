@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.9.0",
+    "docx": "^9.7.1",
     "express": "^4.21.2"
   },
   "devDependencies": {
