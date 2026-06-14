@@ -6,6 +6,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
+app.use(express.static('public'));
 
 // --- GET /api/menu — меню с рецептами по размерам ---
 app.get('/api/menu', async (_req, res) => {
@@ -126,6 +127,20 @@ app.post('/api/orders', async (req, res) => {
   } catch (err) {
     const status = err.status || 500;
     res.status(status).json({ error: err.message });
+  }
+});
+
+// --- GET /api/orders — список заказов (фильтр ?status=PENDING) ---
+app.get('/api/orders', async (req, res) => {
+  try {
+    const where = req.query.status ? { status: req.query.status } : {};
+    const orders = await prisma.order.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(orders);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

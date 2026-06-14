@@ -1,21 +1,24 @@
-# CoffeeSklad — REST API кофейни
+# CoffeeSklad — система управления меню и запасами кофейни
 
-Серверная часть системы управления меню и запасами кофейни.  
-Клиент-серверная архитектура: только REST API, фронтенд не включён — тестирование через Postman или аналог.
+Клиент-серверное приложение для кофейни: REST API на Express + PostgreSQL и простой веб-интерфейс для демонстрации.
 
 ## Стек
 
-- **Node.js** + **Express**
-- **PostgreSQL** (Docker)
-- **Prisma ORM**
+| Слой | Технологии |
+|------|------------|
+| Backend | Node.js, Express, Prisma ORM |
+| База данных | PostgreSQL 15 (Docker) |
+| Frontend | HTML, Tailwind CSS (CDN), vanilla JavaScript |
 
 ## Структура проекта
 
 ```
 CoffeeSklad/
-├── server.js              # Express-приложение, все эндпоинты
+├── server.js              # Express: API + раздача статики
 ├── docker-compose.yml     # PostgreSQL в Docker
 ├── .env                   # DATABASE_URL, PORT
+├── public/
+│   └── index.html         # Веб-интерфейс (SPA)
 ├── prisma/
 │   ├── schema.prisma      # Схема БД
 │   └── seed.js            # Начальные данные
@@ -24,7 +27,7 @@ CoffeeSklad/
 
 ## Быстрый старт
 
-### 1. Установить Docker (Arch Linux, один раз)
+### 1. Docker (Arch Linux, один раз)
 
 ```bash
 sudo pacman -S docker docker-compose
@@ -32,9 +35,9 @@ sudo systemctl enable --now docker
 sudo usermod -aG docker $USER
 ```
 
-После `usermod` перелогинься или перезагрузи систему.
+После `usermod` перелогиниться или перезагрузить систему.
 
-### 2. Запустить проект
+### 2. Запуск
 
 ```bash
 cd /path/to/CoffeeSklad
@@ -48,17 +51,28 @@ npm run db:seed
 npm start
 ```
 
-Сервер: **http://localhost:3000**
+Откройте в браузере: **http://localhost:3000**
 
-Альтернатива — миграция и сид одной командой:
+Миграция и seed одной командой:
 
 ```bash
 npm run db:setup
 ```
 
-## Переменные окружения
+## Веб-интерфейс
 
-Файл `.env` (уже настроен под Docker):
+Одностраничное приложение в `public/index.html`. При переходе на `http://localhost:3000` открывается автоматически.
+
+| Секция | Что делает |
+|--------|------------|
+| **Меню кофейни** | Список позиций, выбор размера (M / XL), добавление в корзину |
+| **Текущий заказ** | Корзина, итоговая сумма, кнопка «Оформить заказ» |
+| **Активные заказы (Для бариста)** | Заказы со статусом `PENDING`, кнопка «Приготовить» |
+| **Склад и Аналитика** | Остатки ингредиентов и прогноз трат на завтра |
+
+Данные обновляются через `fetch` без перезагрузки страницы.
+
+## Переменные окружения
 
 ```env
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/coffee_sklad?schema=public"
@@ -67,71 +81,41 @@ PORT=3000
 
 ## Модели данных
 
-| Модель | Описание |
-|--------|----------|
-| `Ingredient` | Ингредиенты на складе (name, quantity, unit) |
-| `MenuItem` | Позиции меню (name, price) |
-| `RecipeIngredient` | Тех. карта: menuItem + size (M/L/XL) + ingredient + amount |
-| `Order` | Заказы (total, status, items JSON, createdAt) |
+| Модель | Поля | Назначение |
+|--------|------|------------|
+| `Ingredient` | name, quantity, unit | Ингредиенты на складе |
+| `MenuItem` | name, price | Позиции меню |
+| `RecipeIngredient` | menuItemId, size, ingredientId, amount | Тех. карта по размерам (M, L, XL) |
+| `Order` | total, status, items (JSON), createdAt | История заказов |
 
-Статус заказа по умолчанию: `PENDING`. После выдачи клиенту: `COMPLETED`.
+Статусы заказа: `PENDING` (по умолчанию) → `COMPLETED`.
 
-## API
+## REST API
 
-### GET /api/menu
-
-Все позиции меню с рецептами, сгруппированными по размеру.
-
-```bash
-curl http://localhost:3000/api/menu
-```
-
-### GET /api/ingredients
-
-Остатки ингредиентов на складе.
-
-```bash
-curl http://localhost:3000/api/ingredients
-```
+| Метод | URL | Описание |
+|-------|-----|----------|
+| GET | `/api/menu` | Меню с рецептами по размерам |
+| GET | `/api/ingredients` | Остатки на складе |
+| GET | `/api/orders?status=PENDING` | Список заказов (фильтр по статусу опционален) |
+| POST | `/api/orders` | Оформление заказа, списание со склада |
+| PATCH | `/api/orders/:id/complete` | Заказ выполнен (бариста) |
+| GET | `/api/analytics/forecast` | Прогноз расхода ингредиентов |
 
 ### POST /api/orders
-
-Оформление заказа. Проверяет наличие рецепта и достаточность ингредиентов, списывает со склада в транзакции.
-
-**Тело запроса:**
 
 ```json
 {
   "items": [
-    { "menuItemId": 1, "size": "M", "quantity": 2 },
-    { "menuItemId": 1, "size": "XL", "quantity": 1 }
+    { "menuItemId": 1, "size": "M", "quantity": 2 }
   ]
 }
 ```
 
-```bash
-curl -X POST http://localhost:3000/api/orders \
-  -H "Content-Type: application/json" \
-  -d '{"items":[{"menuItemId":1,"size":"M","quantity":2}]}'
-```
-
-При нехватке ингредиентов — **400** с текстом ошибки.
-
-### PATCH /api/orders/:id/complete
-
-Бариста отметил заказ выполненным.
-
-```bash
-curl -X PATCH http://localhost:3000/api/orders/1/complete
-```
+Логика в `$transaction`: поиск рецепта по `menuItemId` + `size` → проверка остатков → декремент ингредиентов → создание заказа. При нехватке — **400** с понятным сообщением.
 
 ### GET /api/analytics/forecast
 
-Прогноз расхода ингредиентов: сумма по всем заказам → среднее за день → × 1.2 (повышенный спрос).
-
-```bash
-curl http://localhost:3000/api/analytics/forecast
-```
+Суммирует расход ингредиентов по всем заказам, делит на число дней (от первого до последнего заказа), умножает на **1.2** — прогноз на период повышенного спроса.
 
 ## Начальные данные (seed)
 
@@ -140,8 +124,6 @@ curl http://localhost:3000/api/analytics/forecast
 | Ингредиенты | Кофе в зернах (5000 гр), Молоко (10000 мл), Сироп ванильный (3000 мл) |
 | Меню | Капучино (250₽), Латте (280₽) |
 | Тех. карты | Капучино M (15 гр + 150 мл), Капучино XL (30 гр + 300 мл), Латте M (12 гр + 200 мл + 20 мл сиропа) |
-
-Повторный seed:
 
 ```bash
 npm run db:seed
@@ -153,7 +135,7 @@ npm run db:seed
 |---------|----------|
 | `npm start` | Запуск сервера |
 | `npm run db:migrate` | Prisma migrate dev |
-| `npm run db:seed` | Заполнение БД тестовыми данными |
+| `npm run db:seed` | Заполнение БД |
 | `npm run db:setup` | Миграция + seed |
 
 ## Docker
@@ -164,13 +146,21 @@ docker compose down       # остановить
 docker compose down -v    # остановить и удалить данные БД
 ```
 
-Контейнер: `coffee_sklad_db`, образ `postgres:15-alpine`, порт `5432`.
+Контейнер: `coffee_sklad_db` · образ: `postgres:15-alpine` · порт: `5432`
 
-## Тестирование в Postman
+## Тестирование
 
-1. `GET http://localhost:3000/api/menu` — узнать `menuItemId`
-2. `GET http://localhost:3000/api/ingredients` — проверить остатки
-3. `POST http://localhost:3000/api/orders` — создать заказ
-4. `GET http://localhost:3000/api/ingredients` — убедиться, что остатки уменьшились
-5. `PATCH http://localhost:3000/api/orders/1/complete` — завершить заказ
-6. `GET http://localhost:3000/api/analytics/forecast` — посмотреть прогноз
+**Через браузер:** http://localhost:3000 — полный сценарий: заказ → бариста → склад → аналитика.
+
+**Через Postman / curl:**
+
+```bash
+curl http://localhost:3000/api/menu
+curl http://localhost:3000/api/ingredients
+curl -X POST http://localhost:3000/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{"items":[{"menuItemId":1,"size":"M","quantity":1}]}'
+curl "http://localhost:3000/api/orders?status=PENDING"
+curl -X PATCH http://localhost:3000/api/orders/1/complete
+curl http://localhost:3000/api/analytics/forecast
+```

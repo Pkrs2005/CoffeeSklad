@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoffeeSklad</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            coffee: { 50: '#faf6f1', 100: '#f0e6d8', 700: '#5c3d2e', 800: '#3d2817', 900: '#2a1a0f' }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-coffee-50 min-h-screen text-coffee-900">
+
+  <header class="bg-coffee-800 text-white shadow-lg">
+    <div class="max-w-6xl mx-auto px-4 py-5 flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight">☕ CoffeeSklad</h1>
+        <p class="text-coffee-100 text-sm mt-0.5">Управление меню и запасами кофейни</p>
+      </div>
+      <button onclick="refreshAll()" class="text-sm bg-coffee-700 hover:bg-coffee-900 px-3 py-1.5 rounded-lg transition">
+        ↻ Обновить
+      </button>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-6 grid gap-6 lg:grid-cols-2">
+
+    <!-- Меню -->
+    <section class="bg-white rounded-xl shadow-sm border border-coffee-100 p-5">
+      <h2 class="text-lg font-semibold text-coffee-800 mb-4">Меню кофейни</h2>
+      <div id="menu-list" class="space-y-4">
+        <p class="text-gray-400 text-sm">Загрузка...</p>
+      </div>
+    </section>
+
+    <!-- Текущий заказ -->
+    <section class="bg-white rounded-xl shadow-sm border border-coffee-100 p-5">
+      <h2 class="text-lg font-semibold text-coffee-800 mb-4">Текущий заказ</h2>
+      <div id="cart-list" class="space-y-2 mb-4 min-h-[80px]">
+        <p class="text-gray-400 text-sm">Корзина пуста</p>
+      </div>
+      <div class="flex items-center justify-between border-t border-coffee-100 pt-4">
+        <span class="font-semibold">Итого: <span id="cart-total">0</span> ₽</span>
+        <div class="flex gap-2">
+          <button onclick="clearCart()" class="text-sm px-3 py-2 rounded-lg border border-gray-300 hover:bg-gray-50 transition">Очистить</button>
+          <button onclick="submitOrder()" class="text-sm px-4 py-2 rounded-lg bg-coffee-800 text-white hover:bg-coffee-900 transition font-medium">Оформить заказ</button>
+        </div>
+      </div>
+      <p id="order-msg" class="mt-3 text-sm hidden"></p>
+    </section>
+
+    <!-- Активные заказы -->
+    <section class="bg-white rounded-xl shadow-sm border border-coffee-100 p-5 lg:col-span-2">
+      <h2 class="text-lg font-semibold text-coffee-800 mb-4">Активные заказы (Для бариста)</h2>
+      <div id="pending-orders" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <p class="text-gray-400 text-sm">Загрузка...</p>
+      </div>
+    </section>
+
+    <!-- Склад и Аналитика -->
+    <section class="bg-white rounded-xl shadow-sm border border-coffee-100 p-5 lg:col-span-2">
+      <h2 class="text-lg font-semibold text-coffee-800 mb-4">Склад и Аналитика</h2>
+      <div class="grid gap-6 md:grid-cols-2">
+        <div>
+          <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-3">Остатки на складе</h3>
+          <div id="ingredients-list" class="space-y-2">
+            <p class="text-gray-400 text-sm">Загрузка...</p>
+          </div>
+        </div>
+        <div>
+          <h3 class="text-sm font-medium text-gray-500 uppercase tracking-wide mb-3">Прогноз трат на завтра (+20%)</h3>
+          <div id="forecast-list" class="space-y-2">
+            <p class="text-gray-400 text-sm">Загрузка...</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    let menu = [];
+    let cart = [];
+    const selectedSize = {}; // menuItemId -> 'M' | 'XL'
+
+    async function api(url, options = {}) {
+      const res = await fetch(url, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Ошибка ${res.status}`);
+      return data;
+    }
+
+    function showMsg(text, ok = true) {
+      const el = document.getElementById('order-msg');
+      el.textContent = text;
+      el.className = `mt-3 text-sm ${ok ? 'text-green-600' : 'text-red-600'}`;
+      el.classList.remove('hidden');
+      setTimeout(() => el.classList.add('hidden'), 4000);
+    }
+
+    // --- Меню ---
+    async function loadMenu() {
+      menu = await api('/api/menu');
+      const container = document.getElementById('menu-list');
+      container.innerHTML = '';
+
+      if (menu.length === 0) {
+        container.innerHTML = '<p class="text-gray-400 text-sm">Меню пусто</p>';
+        return;
+      }
+
+      for (const item of menu) {
+        const sizes = Object.keys(item.sizes);
+        if (!selectedSize[item.id] && sizes.length) {
+          selectedSize[item.id] = sizes.includes('M') ? 'M' : sizes[0];
+        }
+
+        const sizeButtons = sizes.map(s => `
+          <button
+            onclick="pickSize(${item.id}, '${s}')"
+            data-item="${item.id}" data-size="${s}"
+            class="size-btn px-3 py-1 text-xs rounded-full border transition
+              ${selectedSize[item.id] === s
+                ? 'bg-coffee-800 text-white border-coffee-800'
+                : 'bg-white text-coffee-800 border-coffee-200 hover:border-coffee-800'}"
+          >${s}</button>
+        `).join('');
+
+        container.innerHTML += `
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-lg bg-coffee-50 border border-coffee-100">
+            <div>
+              <p class="font-medium">${item.name}</p>
+              <p class="text-sm text-gray-500">${item.price} ₽</p>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap">
+              ${sizeButtons}
+              <button onclick="addToCart(${item.id})"
+                class="px-3 py-1.5 text-sm rounded-lg bg-amber-600 text-white hover:bg-amber-700 transition font-medium">
+                Добавить в заказ
+              </button>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    function pickSize(itemId, size) {
+      selectedSize[itemId] = size;
+      loadMenu();
+    }
+
+    // --- Корзина ---
+    function addToCart(menuItemId) {
+      const item = menu.find(m => m.id === menuItemId);
+      const size = selectedSize[menuItemId];
+      if (!item || !size) return;
+
+      const existing = cart.find(c => c.menuItemId === menuItemId && c.size === size);
+      if (existing) {
+        existing.quantity++;
+      } else {
+        cart.push({ menuItemId, name: item.name, price: item.price, size, quantity: 1 });
+      }
+      renderCart();
+    }
+
+    function removeFromCart(index) {
+      cart.splice(index, 1);
+      renderCart();
+    }
+
+    function clearCart() {
+      cart = [];
+      renderCart();
+    }
+
+    function renderCart() {
+      const container = document.getElementById('cart-list');
+      const totalEl = document.getElementById('cart-total');
+
+      if (cart.length === 0) {
+        container.innerHTML = '<p class="text-gray-400 text-sm">Корзина пуста</p>';
+        totalEl.textContent = '0';
+        return;
+      }
+
+      let total = 0;
+      container.innerHTML = cart.map((c, i) => {
+        const sum = c.price * c.quantity;
+        total += sum;
+        return `
+          <div class="flex items-center justify-between text-sm py-1.5 border-b border-gray-100 last:border-0">
+            <span>${c.name} <span class="text-gray-400">(${c.size})</span> × ${c.quantity}</span>
+            <div class="flex items-center gap-3">
+              <span class="font-medium">${sum} ₽</span>
+              <button onclick="removeFromCart(${i})" class="text-red-400 hover:text-red-600 text-xs">✕</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      totalEl.textContent = total;
+    }
+
+    async function submitOrder() {
+      if (cart.length === 0) {
+        showMsg('Добавьте позиции в заказ', false);
+        return;
+      }
+      try {
+        const items = cart.map(c => ({ menuItemId: c.menuItemId, size: c.size, quantity: c.quantity }));
+        const order = await api('/api/orders', { method: 'POST', body: JSON.stringify({ items }) });
+        showMsg(`Заказ #${order.id} оформлен на ${order.total} ₽`);
+        cart = [];
+        renderCart();
+        await refreshAll();
+      } catch (e) {
+        showMsg(e.message, false);
+      }
+    }
+
+    // --- Активные заказы ---
+    async function loadPendingOrders() {
+      const orders = await api('/api/orders?status=PENDING');
+      const container = document.getElementById('pending-orders');
+      container.innerHTML = '';
+
+      if (orders.length === 0) {
+        container.innerHTML = '<p class="text-gray-400 text-sm col-span-full">Нет активных заказов</p>';
+        return;
+      }
+
+      for (const order of orders) {
+        const itemsText = order.items.map(it => {
+          const m = menu.find(x => x.id === it.menuItemId);
+          const name = m ? m.name : `#${it.menuItemId}`;
+          return `${name} (${it.size}) × ${it.quantity}`;
+        }).join(', ');
+
+        const time = new Date(order.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+        container.innerHTML += `
+          <div class="p-4 rounded-lg border border-amber-200 bg-amber-50">
+            <div class="flex items-center justify-between mb-2">
+              <span class="font-semibold text-coffee-800">Заказ #${order.id}</span>
+              <span class="text-xs text-gray-500">${time}</span>
+            </div>
+            <p class="text-sm text-gray-600 mb-1">${itemsText}</p>
+            <p class="text-sm font-medium mb-3">${order.total} ₽</p>
+            <button onclick="completeOrder(${order.id})"
+              class="w-full py-2 text-sm rounded-lg bg-green-600 text-white hover:bg-green-700 transition font-medium">
+              Приготовить
+            </button>
+          </div>
+        `;
+      }
+    }
+
+    async function completeOrder(id) {
+      try {
+        await api(`/api/orders/${id}/complete`, { method: 'PATCH' });
+        await loadPendingOrders();
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+
+    // --- Склад ---
+    async function loadIngredients() {
+      const ingredients = await api('/api/ingredients');
+      const container = document.getElementById('ingredients-list');
+      container.innerHTML = ingredients.map(ing => {
+        const low = ing.quantity < 500;
+        return `
+          <div class="flex justify-between items-center text-sm py-2 px-3 rounded-lg ${low ? 'bg-red-50 border border-red-100' : 'bg-gray-50'}">
+            <span>${ing.name}</span>
+            <span class="font-medium ${low ? 'text-red-600' : ''}">${ing.quantity} ${ing.unit}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // --- Аналитика ---
+    async function loadForecast() {
+      const data = await api('/api/analytics/forecast');
+      const container = document.getElementById('forecast-list');
+
+      if (!data.forecast || data.forecast.length === 0) {
+        container.innerHTML = `<p class="text-gray-400 text-sm">${data.message || 'Нет данных для прогноза'}</p>`;
+        return;
+      }
+
+      container.innerHTML = `
+        <p class="text-xs text-gray-400 mb-2">На основе ${data.ordersCount} заказов за ${data.days} дн., коэф. ${data.coefficient}</p>
+        ${data.forecast.map(f => `
+          <div class="flex justify-between items-center text-sm py-2 px-3 rounded-lg bg-blue-50 border border-blue-100">
+            <span>${f.name}</span>
+            <span class="font-medium text-blue-700">${f.forecast} ${f.unit}</span>
+          </div>
+        `).join('')}
+      `;
+    }
+
+    async function refreshAll() {
+      await loadMenu();
+      await Promise.all([loadPendingOrders(), loadIngredients(), loadForecast()]);
+    }
+
+    refreshAll();
+  </script>
+</body>
+</html>
