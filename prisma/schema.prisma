@@ -1,0 +1,44 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Ingredient {
+  id       Int                @id @default(autoincrement())
+  name     String
+  quantity Float
+  unit     String
+  recipes  RecipeIngredient[]
+}
+
+model MenuItem {
+  id      Int                @id @default(autoincrement())
+  name    String
+  price   Float
+  recipes RecipeIngredient[]
+}
+
+// Тех. карта: ингредиенты на одну порцию по размеру (M, L, XL)
+model RecipeIngredient {
+  id           Int        @id @default(autoincrement())
+  menuItemId   Int
+  size         String
+  ingredientId Int
+  amount       Float
+  menuItem     MenuItem   @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+
+  @@unique([menuItemId, size, ingredientId])
+}
+
+model Order {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  total     Float
+  status    String   @default("PENDING")
+  items     Json
+}
